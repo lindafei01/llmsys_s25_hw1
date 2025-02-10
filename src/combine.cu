@@ -220,13 +220,13 @@ __global__ void MatrixMultiplyKernel(
    *   None (Fills in out array)
    */
 
-    __shared__ float a_shared[TILE][TILE];
+    __shared__ float a_shared[TILE][TILE]; // 同一个线程块内的所有线程都可以访问这块内存
     __shared__ float b_shared[TILE][TILE];
 
     // In each block, we will compute a batch of the output matrix
     // All the threads in the block will work together to compute this batch
     int batch = blockIdx.z;
-    int a_batch_stride = a_shape[0] > 1 ? a_strides[0] : 0;
+    int a_batch_stride = a_shape[0] > 1 ? a_strides[0] : 0; // 如果批处理维度大于1，使用正常的步长；如果批处理的维度等于1， 步长设为0（因为不需要在批次间移动）
     int b_batch_stride = b_shape[0] > 1 ? b_strides[0] : 0;
 
 
@@ -240,8 +240,63 @@ __global__ void MatrixMultiplyKernel(
     // 5. Compute the output tile for this thread block
     // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
     // 7. Write the output to global memory
+    // 计算当前线程负责的输出矩阵位置
+    int row = blockIdx.x * TILE + threadIdx.x;
+    int col = blockIdx.y * TILE + threadIdx.y;
 
-    assert(false && "Not Implemented");
+    // 初始化累加结果
+    float sum = 0.0f;
+
+    // 计算需要处理的tile数量
+    int num_tiles = (a_shape[2] + TILE - 1) / TILE;
+
+    // 遍历所有tiles
+    for (int t = 0; t < num_tiles; ++t) {
+        // 加载A矩阵数据到共享内存
+        if (row < a_shape[1] && (t * TILE + threadIdx.y) < a_shape[2]) {
+            int a_idx = batch * a_batch_stride + 
+                       row * a_strides[1] + 
+                       (t * TILE + threadIdx.y) * a_strides[2];
+            a_shared[threadIdx.x][threadIdx.y] = a_storage[a_idx];
+        } else {
+            a_shared[threadIdx.x][threadIdx.y] = 0.0f;
+        }
+
+        // 加载B矩阵数据到共享内存
+        if ((t * TILE + threadIdx.x) < b_shape[1] && col < b_shape[2]) {
+            int b_idx = batch * b_batch_stride + 
+                       (t * TILE + threadIdx.x) * b_strides[1] + 
+                       col * b_strides[2];
+            b_shared[threadIdx.x][threadIdx.y] = b_storage[b_idx];
+        } else {
+            b_shared[threadIdx.x][threadIdx.y] = 0.0f;
+        }
+
+        // 同步确保所有数据都已加载完成
+        __syncthreads();
+
+        // 计算当前tile的点积
+        for (int k = 0; k < TILE; ++k) {
+            if ((t * TILE + k) < a_shape[2]) {
+                sum += a_shared[threadIdx.x][k] * b_shared[k][threadIdx.y];
+            }
+        }
+
+        // 同步确保所有线程完成计算
+        __syncthreads();
+    }
+
+    // 写入结果到全局内存
+    if (row < a_shape[1] && col < b_shape[2]) {
+        int out_idx = batch * out_strides[0] + 
+                     row * out_strides[1] + 
+                     col * out_strides[2];
+        out[out_idx] = sum;
+    }
+
+
+
+    // assert(false && "Not Implemented");
     /// END ASSIGN1_2
 }
 
@@ -293,8 +348,19 @@ __global__ void mapKernel(
     // 4. Calculate the position of element in in_array according to in_index and in_strides
     // 5. Calculate the position of element in out_array according to out_index and out_strides
     // 6. Apply the unary function to the input element and write the output to the out memory
-    
-    assert(false && "Not Implemented");
+    int pos = blockIdx.x * blockDim.x + threadIdx.x; // blockDim指定了每一个block中包含的线程数量
+
+    if (pos < out_size){
+      // 将位置转换为输出数组的多维索引
+      to_index(pos, out_shape, out_index, shape_size);
+      // 将输出索引广播到输入索引
+      broadcast_index(out_index, out_shape, in_shape, in_index, shape_size, shape_size);
+      // 计算输入元素在输入数组中的位置
+      int in_pos = index_to_position(in_index, in_strides, shape_size);
+      // 应用一元函数并写入结果
+      out[pos] = fn(fn_id, in_storage[in_pos]);
+    }
+    // assert(false && "Not Implemented");
     /// END ASSIGN1_2
 }
 
@@ -350,8 +416,44 @@ __global__ void reduceKernel(
     // 3. Initialize the reduce_value to the output element
     // 4. Iterate over the reduce_dim dimension of the input array to compute the reduced value
     // 5. Write the reduced value to out memory
+
+    // 计算当前线程处理的输出位置
+    int pos = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (pos < out_size) {
+        // 将输出位置转换为多维索引
+        to_index(pos, out_shape, out_index, shape_size);
+        
+        // 初始化结果为规约初始值
+        float result = reduce_value;
+        
+        // 计算需要规约的维度的大小
+        int reduce_size = a_shape[reduce_dim];
+        
+        // 遍历需要规约的维度
+        for (int i = 0; i < reduce_size; i++) {
+            // 构造完整的输入索引
+            int a_index[MAX_DIMS];
+            for (int j = 0; j < shape_size; j++) {
+                if (j == reduce_dim) {
+                    a_index[j] = i;  // 在规约维度上遍历
+                } else {
+                    a_index[j] = out_index[j];  // 其他维度保持不变
+                }
+            }
+            
+            // 计算输入数组中的位置
+            int a_pos = index_to_position(a_index, a_strides, shape_size);
+            
+            // 根据规约函数进行计算
+            result = fn(fn_id, result, a_storage[a_pos]);
+        }
+        
+        // 将结果写入输出数组
+        out[pos] = result;
+    }
     
-    assert(false && "Not Implemented");
+    // assert(false && "Not Implemented");
     /// END ASSIGN1_2
 }
 
@@ -416,8 +518,25 @@ __global__ void zipKernel(
     // 6. Broadcast the out_index to the b_index according to b_shape
     // 7.Calculate the position of element in b_array according to b_index and b_strides
     // 8. Apply the binary function to the input elements in a_array & b_array and write the output to the out memory
-    
-    assert(false && "Not Implemented");
+    // 计算当前线程处理的位置
+    int pos = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (pos < out_size) {
+        // 将位置转换为输出数组的多维索引
+        to_index(pos, out_shape, out_index, out_shape_size);
+        
+        // 将输出索引广播到两个输入数组的索引
+        broadcast_index(out_index, out_shape, a_shape, a_index, out_shape_size, a_shape_size);
+        broadcast_index(out_index, out_shape, b_shape, b_index, out_shape_size, b_shape_size);
+        
+        // 计算两个输入数组中的位置
+        int a_pos = index_to_position(a_index, a_strides, a_shape_size);
+        int b_pos = index_to_position(b_index, b_strides, b_shape_size);
+        
+        // 应用二元函数并写入结果
+        out[pos] = fn(fn_id, a_storage[a_pos], b_storage[b_pos]);
+    }
+    // assert(false && "Not Implemented");
     /// END ASSIGN1_2
 }
 
