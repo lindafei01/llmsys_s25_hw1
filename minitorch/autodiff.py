@@ -110,11 +110,11 @@ def topological_sort(variable: Variable) -> Iterable[Variable]:
             return
         
         visited.add(var.unique_id)
+        ordering.append(var)
 
         for parent in var.parents:
             visit(parent)
-        ordering.append(var)
-
+        
     visit(variable)
     return ordering
     
@@ -138,7 +138,7 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     ordered = topological_sort(variable)
     derivatives = {variable.unique_id: deriv}
 
-    for var in reversed(ordered):
+    for var in ordered:
         deriv = derivatives[var.unique_id]
 
         if var.is_leaf():
