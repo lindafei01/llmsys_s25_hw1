@@ -217,7 +217,7 @@ class SentenceSentimentTrain:
                 out = model.forward(x)
 
                 # 4. 计算二元交叉熵损失
-                loss = -(y * out.log() + (1 - y) * (1 - out).log()).sum()
+                loss = -(y * out.log() + (y - 1) * (out - 1).log()).mean()
 
                 # 5. 反向传播
                 loss.backward()
