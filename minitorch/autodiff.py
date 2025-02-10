@@ -143,6 +143,7 @@ def backpropagate(variable: Variable, deriv: Any) -> None: # 函数接受任何�
 
         if var.is_leaf():
             var.accumulate_derivative(deriv)
+            continue
         
         for parent, d in var.chain_rule(deriv):
             parent_id = parent.unique_id
