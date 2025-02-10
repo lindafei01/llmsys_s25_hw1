@@ -116,13 +116,13 @@ def topological_sort(variable: Variable) -> Iterable[Variable]:
         ordering.append(var)
         
     visit(variable)
-    return ordering
+    return ordering[::-1]
     
     # raise NotImplementedError("Task Autodiff Not Implemented Yet")
     # END ASSIGN1_1
 
 
-def backpropagate(variable: Variable, deriv: Any) -> None:
+def backpropagate(variable: Variable, deriv: Any) -> None: # 函数接受任何实现了Variable protocol的对象
     """
     Runs backpropagation on the computation graph in order to
     compute derivatives for the leave nodes.
@@ -138,7 +138,7 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     ordered = topological_sort(variable)
     derivatives = {variable.unique_id: deriv}
 
-    for var in reversed(ordered):
+    for var in ordered:
         deriv = derivatives[var.unique_id]
 
         if var.is_leaf():

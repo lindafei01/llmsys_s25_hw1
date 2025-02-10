@@ -187,7 +187,7 @@ class Tensor:
     def __radd__(self, b: TensorLike) -> Tensor:
         return self + b
 
-    def __rmul__(self, b: TensorLike) -> Tensor:
+    def __rmul__(self, b: TensorLike) -> Tensor: # self在乘号的右边，也即b*self
         return self * b
     
     def __pow__(self, b: TensorLike) -> Tensor: 
